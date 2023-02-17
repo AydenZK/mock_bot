@@ -1,5 +1,4 @@
 import numpy as np
-import time
 from pytimedinput import timedInput
 
 # Trade itself [x]
@@ -7,13 +6,19 @@ from pytimedinput import timedInput
 # Human Interface
     # varying times for quotes
 
-ITERATIONS = 15
-MEAN_MIN = 10
-MEAN_MAX = 100
+ITERATIONS = 35
+MEAN_MIN = 100
+MEAN_MAX = 250
 
-VARIANCE_MIN = 5
-VARIANCE_MAX = 50
+STD_MIN = 5
+STD_MAX = 50
+STD_SETTLEMENT = 25
+
 CROSS_PROB = 0.4
+
+TIME_LOW = 0.2
+TIME_HIGH = 2
+
 
 Bid = 1
 Offer = 0
@@ -33,19 +38,19 @@ class Book:
     def __init__(self):
         self.bids = []
         self.offers = []
-    
+
     def best_offer(self):
         return min(self.offers) if self.offers else 2e16
-    
+
     def best_bid(self):
         return max(self.bids) if self.bids else -2e16
-    
+
     def display(self):
         bids = sorted(self.bids, reverse=True)
         offers = sorted(self.offers, reverse=True)
 
         for o in offers:
-            print(f'    | {o} ')
+            print(f'     | {o} ')
         for b in bids:
             print(f' {b} |  ')
 
@@ -83,21 +88,33 @@ class Book:
         else:
             self.append(quote)
 
-       
+
 class Bot:
     def __init__(self):
         self.theo = np.random.uniform(MEAN_MIN, MEAN_MAX)
 
     def calc_var(self, i):
-        var_width = VARIANCE_MAX - VARIANCE_MIN
+        var_width = STD_MAX - STD_MIN
         dec_per_it = var_width / ITERATIONS
 
-        return VARIANCE_MAX - i*dec_per_it
-    
+        return STD_MAX - i*dec_per_it
+
     def quote(self, i):
-        price = np.random.normal(self.theo, self.calc_var(i)) 
-        cross = np.random.random() < CROSS_PROB        
-        side = int(price < self.theo and not cross)
+        # bid = 1
+        price = np.random.normal(self.theo, self.calc_var(i))
+        cross = np.random.random() < CROSS_PROB # the bot will cross itself (quote a bad price)
+
+        if price < self.theo:
+            if cross:
+                side = Offer
+            else:
+                side = Bid
+        else:
+            if cross:
+                side = Bid
+            else:
+                side = Offer
+        # side = int(price < self.theo and not cross)
 
         return Quote(price, side)
 
@@ -106,14 +123,14 @@ class Game:
         self.bot = Bot()
         self.book = Book()
         self.position = 0
-        self.settlement = np.random.normal(self.bot.theo, VARIANCE_MAX)
+        self.settlement = np.random.normal(self.bot.theo, STD_SETTLEMENT)
         self.trades = []
 
     def start(self):
         for i in range(ITERATIONS):
             q = self.bot.quote(i)
             self.book.process_quote(q)
-            player_action, missed = timedInput(timeout=2, resetOnInput=False, endCharacters='\r')
+            player_action, missed = timedInput(timeout=1, resetOnInput=False, endCharacters='\r')
 
             if missed:
                 if player_action:
@@ -122,7 +139,8 @@ class Game:
                 self.process_action(player_action)
 
             self.book.display()
-            player_action, missed = timedInput(timeout=3, resetOnInput=False, endCharacters='\r')
+            variable_speed = int(round(np.random.uniform(TIME_LOW,TIME_HIGH)))
+            player_action, missed = timedInput(timeout=variable_speed, resetOnInput=False, endCharacters='\r')
 
             if missed:
                 if player_action:
@@ -136,13 +154,14 @@ class Game:
         print(f"Trades: {self.trades}")
         print(f'Settles @ {self.settlement}')
         print(f'Bot Theo: {self.bot.theo}')
+        print(f'PnL: $ {round(self.settlement*self.position - sum(self.trades), 2)}')
 
     def process_action(self, action):
         """Action must be hit, lift, mine or yours"""
-        if action in ['hit', 'yours']:
+        if action in ['h', 'yours']:
             self.execute(Sell, self.book.best_bid())
 
-        if action in ['lift', 'mine']:
+        if action in ['l', 'mine']:
             self.execute(Buy, self.book.best_offer())
 
     def execute(self, side, price):
