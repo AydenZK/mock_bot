@@ -1,10 +1,6 @@
+#%%
 import numpy as np
 from pytimedinput import timedInput
-
-# Trade itself [x]
-# Remove Stale [x]
-# Human Interface
-    # varying times for quotes
 
 ITERATIONS = 35
 MEAN_MIN = 100
@@ -19,51 +15,93 @@ CROSS_PROB = 0.4
 TIME_LOW = 0.2
 TIME_HIGH = 2
 
-
 Bid = 1
-Offer = 0
 Buy = 1
+Offer = -1
 Sell = -1
-side_map = {1: "Bid", 0: "Offer"}
+side_map = {1: "Bid", -1: "Offer"}
 
+def calc_decayed_var(i):
+    """Linear decaying variance"""
+    var_width = STD_MAX - STD_MIN
+    dec_per_it = var_width / ITERATIONS
+
+    return STD_MAX - i*dec_per_it
+
+def calc_n_quotes(n_books, scale=2):
+    return max(np.ceil(np.random.exponential(scale=scale)), n_books)
+
+def display_books(lst):
+    # TODO
+    pass
+
+class Trader:
+    def __init__(self, books):
+        self.log = {
+            b.label: {
+                "book": b,
+                "trades": []
+            }
+        for b in books}
+
+    def process_action(self, trade, book_label):
+        self.log[book_label]['trades'].append(trade)
+
+    def reconcile(self):
+        pnls = []
+        for _, v in self.log.items():
+            b = v['book']
+            trades = v['trades']
+            pos = sum([np.sign(t) for t in trades])
+
+            pnl = round(b.settlement*pos - sum(trades), 2)
+            pnls.append(pnl)
+            
+            book_res = {
+                "Position": pos,
+                "Trades": v['trades'],
+                "Settles": b.settlement,
+                "Market Theo": b.theo,
+                "PnL": f"$ {pnl}"
+            }
+            print(f"{b.name}: ")
+            print(book_res)
+
+        
 class Quote:
-    def __init__(self, price, side) -> None:
+    def __init__(self, price, side, book_name) -> None:
+        self.book_name = book_name
         self.price = round(price)
         self.side = side  # 1 = bid, # 0 = offer
 
     def __repr__(self):
-        return f"{side_map[self.side]} {self.price}"
+        return f"{self.book_name}: {side_map[self.side]} {self.price}"
 
 class Book:
-    def __init__(self):
+    def __init__(self, name='Future A', label='a'):
         self.bids = []
         self.offers = []
+        self.name = name
+        self.label = label
+        self.theo = np.random.uniform(MEAN_MIN, MEAN_MAX)
+        self.settlement = np.random.normal(self.theo, STD_SETTLEMENT)
 
-    def best_offer(self):
+    def get_best_offer(self):
         return min(self.offers) if self.offers else 2e16
 
-    def best_bid(self):
+    def get_best_bid(self):
         return max(self.bids) if self.bids else -2e16
-
-    def display(self):
-        bids = sorted(self.bids, reverse=True)
-        offers = sorted(self.offers, reverse=True)
-
-        for o in offers:
-            print(f'     | {o} ')
-        for b in bids:
-            print(f' {b} |  ')
-
-    def clean_book(self):
+    
+    def clean(self):
         if len(self.offers) > 5:
             worst_offer = max(self.offers)
             self.offers.remove(worst_offer)
-            print(f"Removed {worst_offer} Offer")
+            print(f"{self.name}: Removed {worst_offer} Offer")
         if len(self.bids) > 5:
             worst_bid = min(self.bids)
             self.bids.remove(worst_bid)
-            print(f"Removed {worst_bid} Bid")
-
+            print(f"{self.name}: Removed {worst_bid} Bid")
+    
     def append(self, quote):
         # Appends to order book (quote is not in cross)
         print(quote)
@@ -72,36 +110,11 @@ class Book:
         else:
             self.offers.append(quote.price)
 
-        self.clean_book()
+        self.clean()
 
-    def process_quote(self, quote):
-        # Quote is in cross
-        lift = quote.side == Bid and quote.price > self.best_offer()
-        hit = quote.side == Offer and quote.price < self.best_bid()
-
-        if lift:
-            print(f"{self.best_offer()} Offer Lifted")
-            self.offers.remove(self.best_offer())
-        elif hit:
-            print(f"{self.best_bid()} Bid Hit")
-            self.bids.remove(self.best_bid())
-        else:
-            self.append(quote)
-
-
-class Bot:
-    def __init__(self):
-        self.theo = np.random.uniform(MEAN_MIN, MEAN_MAX)
-
-    def calc_var(self, i):
-        var_width = STD_MAX - STD_MIN
-        dec_per_it = var_width / ITERATIONS
-
-        return STD_MAX - i*dec_per_it
-
-    def quote(self, i):
+    def generate_quote(self, i):
         # bid = 1
-        price = np.random.normal(self.theo, self.calc_var(i))
+        price = np.random.normal(self.theo, calc_decayed_var(i))
         cross = np.random.random() < CROSS_PROB # the bot will cross itself (quote a bad price)
 
         if price < self.theo:
@@ -114,66 +127,104 @@ class Bot:
                 side = Bid
             else:
                 side = Offer
-        # side = int(price < self.theo and not cross)
 
         return Quote(price, side)
 
-class Game:
-    def __init__(self):
-        self.bot = Bot()
-        self.book = Book()
-        self.position = 0
-        self.settlement = np.random.normal(self.bot.theo, STD_SETTLEMENT)
-        self.trades = []
+    def process_quote(self, quote):
+        # Quote is in cross
+        best_offer = self.get_best_offer()
+        best_bid = self.get_best_bid()
+        lift = quote.side == Bid and quote.price > best_offer
+        hit = quote.side == Offer and quote.price < best_bid
 
-    def start(self):
-        for i in range(ITERATIONS):
-            q = self.bot.quote(i)
-            self.book.process_quote(q)
-            player_action, missed = timedInput(timeout=1, resetOnInput=False, endCharacters='\r')
-
-            if missed:
-                if player_action:
-                    print('No Action')
-            else:
-                self.process_action(player_action)
-
-            self.book.display()
-            variable_speed = int(round(np.random.uniform(TIME_LOW,TIME_HIGH)))
-            player_action, missed = timedInput(timeout=variable_speed, resetOnInput=False, endCharacters='\r')
-
-            if missed:
-                if player_action:
-                    print('No Action')
-            else:
-                self.process_action(player_action)
-
-            print("-"*80)
-
-        print(f"Position: {self.position}")
-        print(f"Trades: {self.trades}")
-        print(f'Settles @ {self.settlement}')
-        print(f'Bot Theo: {self.bot.theo}')
-        print(f'PnL: $ {round(self.settlement*self.position - sum(self.trades), 2)}')
-
-    def process_action(self, action):
-        """Action must be hit, lift, mine or yours"""
-        if action in ['h', 'yours']:
-            self.execute(Sell, self.book.best_bid())
-
-        if action in ['l', 'mine']:
-            self.execute(Buy, self.book.best_offer())
-
-    def execute(self, side, price):
-        self.position += side
-        self.trades.append(side * price)
-        if side > 0:
-            print(f"Bought @ {self.book.best_offer()}!")
-            self.book.offers.remove(self.book.best_offer())
+        if lift:
+            print(f"{self.name}: {best_offer} Offer Lifted")
+            self.offers.remove(best_offer)
+        elif hit:
+            print(f"{self.name}: {best_bid} Bid Hit")
+            self.bids.remove(best_bid)
         else:
-            print(f"Sold @ {self.book.best_bid()}!")
-            self.book.bids.remove(self.book.best_bid())
+            self.append(quote)
+
+    def process_action(self, raw_action) -> bool:
+        """Returns true if the action was able to be processed correctly"""
+        if raw_action == 'h':
+            price = self.get_best_bid()
+            print(f'{self.name}: Sold @ {price}!')
+            self.bids.remove(price)
+            return True, Sell * price
+
+        elif raw_action == 'l':
+            price = self.get_best_offer()
+            print(f'{self.name}: Bought @ {price}!')
+            self.offers.remove(price)
+            return True, Buy * price
+        
+        return False, None
+
+
+class Market:
+    def __init__(self, books: list, trader: Trader):
+        self.books = books
+        self.book_map = {b.label: b for b in books}
+        self.trader = trader
+
+    def input_valid(self, string) -> bool:
+        return len(string) == 2 and string[0] in ['l', 'h'] and string[1] in self.book_map.keys()
+
+    def input_parse(self, user_input):
+        actions = user_input.split(' ')
+        valid_actions = [a for a in actions if self.input_valid(a)]
+        return valid_actions
+    
+    def input_request(self, timeout):
+        user_input, missed = timedInput(timeout=timeout, resetOnInput=False, endCharacters='\r')
+
+        if missed:
+            if user_input:
+                print('No Action')
+            else:
+                actions = self.input_parse(user_input)
+                return actions
+
+    def process_actions(self, actions:list):
+        if actions is None:
+            return
+        
+        for action, book_label in actions:
+            book = self.book_map[book_label]
+            processed, trade = book.process_action(action)
+            if processed:
+                self.trader.process_action(trade, book_label)
+            
+    def start(self):
+        n_books = len(self.books)
+        for i in range(ITERATIONS):
+            # Generate and print quotes
+            n_quotes = calc_n_quotes(n_books)
+            quote_books = np.random.choice(self.books, n_quotes, replace=False)
+            for b in quote_books:
+                q = b.generate_quote(i)
+                b.process_quote(q)
+
+            # Listen for user actions & execute
+            actions = self.input_request(timeout=1.5)
+            self.process_actions(actions)
+            
+            # Display Book
+            # TODO
+            # Listen for user actions & execute
+            # TODO
+
+        # End result
 
 if __name__ == '__main__':
-    g = Game()
-    g.start()
+    future_a = Book('Future A', 'a')
+    future_b = Book('Future B', 'b')
+    books = [future_a, future_b]
+
+    t = Trader(books=books, name='Warren Buffet')
+    m = Market(books=books, trader=t)
+    m.start()
+
+    t.reconcile()
