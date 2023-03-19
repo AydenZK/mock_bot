@@ -1,9 +1,7 @@
-from typing import List, Dict
 import numpy as np
 import pandas as pd
 from pytimedinput import timedInput
-
-
+from abc import ABC, abstractmethod
 
 Bid = 1
 Buy = 1
@@ -188,7 +186,7 @@ class Market:
 
     def input_valid(self, string) -> bool:
         """Check if user input is valid."""
-        return len(string) == 2 and string[0] in ['l', 'h'] and string[1] in self.book_map.keys()
+        return string[0] in ['l', 'h'] and string[1] in self.book_map.keys()
 
     def input_parse(self, user_input: str) -> list[str]:
         """Parse user input into a list of actions.
@@ -261,6 +259,52 @@ class Market:
             if actions == 'END': break
             self.process_actions(actions)
 
+class Option(Book):
+    def __init__(self, underlying, strike) -> None:
+        super().__init__()
+        self.underlying = underlying
+        self.strike = strike
+        self.theo = self.calc_option_theo()
+        self.iterations = self.underlying.iterations
+
+    def calc_option_theo(self) -> float:
+        """Calculate theoretical value of option."""
+        raise NotImplementedError
+    
+    def calc_option_price(self) -> float:
+        """Calculate option price."""
+        raise NotImplementedError
+
+class Call(Option):
+    def __init__(self) -> None:
+        super().__init__()
+        self.theo = self.calc_option_theo()
+        self.name = f"{self.underlying.label} {self.strike} Call"
+        self.label = f"{self.underlying.label}{self.strike}c"
+
+    def calc_option_theo(self) -> float:
+        """Calculate theoretical value of call option."""
+        return max(self.underlying.theo - self.strike, 0)
+    
+    def calc_option_price(self) -> float:
+        """Calculate option price."""
+        raise NotImplementedError
+    
+class Put(Option):
+    def __init__(self) -> None:
+        super().__init__()
+        self.theo = self.calc_option_theo()
+        self.name = f"{self.underlying.label} {self.strike} Put"
+        self.label = f"{self.underlying.label}{self.strike}p"
+
+    def calc_option_theo(self) -> float:
+        """Calculate theoretical value of put option."""
+        return max(self.strike - self.underlying.theo, 0)
+    
+    def calc_option_price(self) -> float:
+        """Calculate option price."""
+        raise NotImplementedError
+
 if __name__ == '__main__':
     iterations = 20
 
@@ -269,6 +313,8 @@ if __name__ == '__main__':
         std_min=5, std_max=50, theo_min=100, theo_max=250,
         settlement_std=25, cross_prob = 0.4
     )
+    call_a = Call(underlying = future_a, strike=100)
+
     future_b = Book(
         name='Future B', label='b', iterations=iterations, 
         std_min=5, std_max=50, theo_min=100, theo_max=250,
